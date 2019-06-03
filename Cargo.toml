@@ -1,0 +1,12 @@
+[package]
+name = "rust-playground"
+version = "0.1.0"
+authors = ["AR <arseneyr@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+rand = "0.6"
+strum = "0.15.0"
+strum_macros = "0.15.0"
+num-traits = "0.2"
+num-derive = "0.2"
