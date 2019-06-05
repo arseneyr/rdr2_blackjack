@@ -3,6 +3,7 @@ use num_traits::FromPrimitive;
 
 use std::cmp;
 use std::fmt;
+use std::collections::HashMap;
 
 use std::mem;
 use std::ops;
@@ -22,10 +23,10 @@ pub enum Card {
   Ten,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Deck([usize; 10]);
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct DeckIterator<'a>(&'a Deck, usize, usize);
 
 impl Deck {
@@ -39,16 +40,26 @@ impl Deck {
     DeckIterator(self, 0, 0)
   }
 
+  pub fn get_count(&self, card: &Card) -> usize {
+    self.0[*card as usize - 1]
+  }
+
   pub fn remove_cards(&mut self, cards: &[Card]) {
     for card in cards {
-      self.0[(*card as usize) - 1] -= 1;
+      self.0[*card as usize - 1] -= 1;
     }
   }
 
   pub fn add_cards(&mut self, cards: &[Card]) {
     for card in cards {
-      self.0[(*card as usize) - 1] += 1;
+      self.0[*card as usize - 1] += 1;
     }
+  }
+}
+
+impl<'a> From<&'a Deck> for &'a[usize; 10] {
+  fn from(deck: &Deck) -> &[usize; 10] {
+    &deck.0
   }
 }
 
@@ -126,27 +137,62 @@ impl From<HandValue> for u32 {
   }
 }
 
+impl ops::Add<Card> for HandValue {
+  type Output = Self;
 
-impl ops::AddAssign<Card> for HandValue {
-  fn add_assign(&mut self, card: Card) {
-    let card_value = card as u32;
-    match *self {
+  fn add(self, rhs: Card) -> Self {
+    let card_value = rhs as u32;
+    match self {
       HandValue::Soft(x) => {
         if x + card_value > 21 {
-          *self = HandValue::Hard(x + card_value - 10);
+          HandValue::Hard(x + card_value - 10)
         } else {
-          *self = HandValue::Soft(x + card_value);
+          HandValue::Soft(x + card_value)
         }
       }
       HandValue::Hard(x) => {
         if card_value == 1 && x <= 10 {
-          *self = HandValue::Soft(x + 11);
+          HandValue::Soft(x + 11)
         } else {
-          *self = HandValue::Hard(x + card_value)
+          HandValue::Hard(x + card_value)
         }
       }
-    };
+    }
+  }
+}
+
+
+impl ops::AddAssign<Card> for HandValue {
+  fn add_assign(&mut self, card: Card) {
+    *self = *self + card;
   }
 }
 
 pub type Hand = Vec<Card>;
+
+#[derive(Debug)]
+pub struct CardMap<T> {
+  array: [Option<T>; 10],
+}
+
+impl<T> CardMap<T> {
+  pub fn new() -> CardMap<T> {
+    CardMap {
+      array: Default::default(),
+    }
+  }
+
+  pub fn set(&mut self, card: Card, val: T) {
+    self.array[card as usize - 1] = Some(val)
+  }
+}
+
+impl<T> ops::Index<Card> for CardMap<T> {
+  type Output = Option<T>;
+
+  fn index(&self, card: Card) -> &Self::Output {
+    &self.array[card as usize - 1]
+  }
+}
+
+pub type DealerProb = HashMap<HandValue, f64>;
