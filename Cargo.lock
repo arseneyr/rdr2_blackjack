@@ -32,6 +32,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-dealer"
+version = "0.1.0"
+
+[[package]]
 name = "libc"
 version = "0.2.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -178,6 +182,7 @@ dependencies = [
 name = "rust-playground"
 version = "0.1.0"
 dependencies = [
+ "lib-dealer 0.1.0",
  "num-derive 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",

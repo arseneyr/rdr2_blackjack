@@ -2,14 +2,14 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
 use std::cmp;
-use std::fmt;
-use std::collections::HashMap;
 
+use std::collections::HashMap;
+use std::fmt;
 use std::mem;
 use std::ops;
 use strum_macros::EnumIter;
 
-#[derive(Copy, Clone, Debug, EnumIter, Eq, Ord, PartialEq, PartialOrd, FromPrimitive)]
+#[derive(Copy, Clone, Debug, EnumIter, Eq, Ord, PartialEq, PartialOrd, FromPrimitive, Hash)]
 pub enum Card {
   Ace = 1,
   Two,
@@ -23,43 +23,123 @@ pub enum Card {
   Ten,
 }
 
-#[derive(Debug, Clone)]
-pub struct Deck([usize; 10]);
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Deck {
+  cards: [usize; 10],
+  card_count: usize,
+}
 
 #[derive(Clone, Copy)]
 pub struct DeckIterator<'a>(&'a Deck, usize, usize);
 
+pub struct RankIterator<'a>(&'a Deck, usize);
+
 impl Deck {
   pub fn new(deck_count: usize) -> Self {
-    let mut ret = [deck_count * 4; 10];
-    ret[9] *= 4;
-    Self(ret)
+    let mut cards = [deck_count * 4; 10];
+    cards[9] *= 4;
+    Self {
+      cards,
+      card_count: deck_count * 52,
+    }
   }
 
   pub fn iter<'a>(&'a self) -> DeckIterator<'a> {
     DeckIterator(self, 0, 0)
   }
 
-  pub fn get_count(&self, card: &Card) -> usize {
-    self.0[*card as usize - 1]
+  pub fn rank_iter<'a>(&'a self) -> RankIterator<'a> {
+    RankIterator(self, 0)
+  }
+
+  pub fn get_count_of_card(&self, card: Card) -> usize {
+    self.cards[card as usize - 1]
+  }
+
+  pub fn get_count(&self) -> usize {
+    self.card_count
   }
 
   pub fn remove_cards(&mut self, cards: &[Card]) {
     for card in cards {
-      self.0[*card as usize - 1] -= 1;
+      self.cards[*card as usize - 1] -= 1;
+      self.card_count -= 1;
     }
   }
 
   pub fn add_cards(&mut self, cards: &[Card]) {
     for card in cards {
-      self.0[*card as usize - 1] += 1;
+      self.cards[*card as usize - 1] += 1;
+      self.card_count += 1;
     }
   }
 }
 
-impl<'a> From<&'a Deck> for &'a[usize; 10] {
+impl ops::Sub for &Deck {
+  type Output = Option<Deck>;
+  fn sub(self, rhs: Self) -> Self::Output {
+    if self.card_count < rhs.card_count {
+      return None;
+    }
+
+    let mut ret = Deck {
+      cards: [0; 10],
+      card_count: self.card_count - rhs.card_count,
+    };
+    for i in 0..self.cards.len() {
+      if self.cards[i] < rhs.cards[i] {
+        return None;
+      }
+      ret.cards[i] = self.cards[i] - rhs.cards[i];
+    }
+    Some(ret)
+  }
+}
+
+impl ops::Sub<Card> for &Deck {
+  type Output = Option<Deck>;
+  fn sub(self, rhs: Card) -> Self::Output {
+    if self.cards[rhs as usize - 1] == 0 {
+      return None;
+    }
+
+    let mut ret = self.clone();
+    ret.card_count -= 1;
+    ret.cards[rhs as usize - 1] -= 1;
+    Some(ret)
+  }
+}
+
+impl ops::Add<Card> for &Deck {
+  type Output = Deck;
+  fn add(self, rhs: Card) -> Self::Output {
+
+    let mut ret = self.clone();
+    ret.card_count += 1;
+    ret.cards[rhs as usize - 1] += 1;
+    ret
+  }
+}
+
+impl<'a> From<&'a Deck> for &'a [usize; 10] {
   fn from(deck: &Deck) -> &[usize; 10] {
-    &deck.0
+    &deck.cards
+  }
+}
+
+impl<'a> Iterator for RankIterator<'a> {
+  type Item = Card;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let Self(Deck { cards, .. }, rank) = self;
+
+    while *rank < cards.len() && cards[*rank] == 0 {
+      *rank += 1;
+    }
+
+    let ret = Card::from_usize(*rank + 1);
+    *rank += 1;
+    ret
   }
 }
 
@@ -67,20 +147,20 @@ impl<'a> Iterator for DeckIterator<'a> {
   type Item = Card;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let Self(Deck(deck), rank, count) = self;
+    let Self(Deck { cards, .. }, rank, count) = self;
 
-    while *rank < deck.len() && deck[*rank] == 0 {
+    while *rank < cards.len() && cards[*rank] == 0 {
       *rank += 1;
       *count = 0;
     }
 
-    if (*rank) >= deck.len() {
+    if (*rank) >= cards.len() {
       return None;
     }
 
     let ret = Card::from_usize(*rank + 1).unwrap();
     *count += 1;
-    if *count == deck[*rank] {
+    if *count == cards[*rank] {
       *rank += 1;
       *count = 0;
     }
@@ -89,7 +169,7 @@ impl<'a> Iterator for DeckIterator<'a> {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum HandValue {
   Hard(u32),
   Soft(u32),
@@ -115,9 +195,9 @@ impl PartialEq for HandValue {
 impl Eq for HandValue {}
 impl Ord for HandValue {
   fn cmp(&self, rhs: &Self) -> cmp::Ordering {
-    match (self, rhs) {
-      (&HandValue::Soft(_), &HandValue::Hard(_)) => cmp::Ordering::Less,
-      (&HandValue::Hard(_), &HandValue::Soft(_)) => cmp::Ordering::Greater,
+    match (*self, *rhs) {
+      (HandValue::Soft(_), HandValue::Hard(_)) => cmp::Ordering::Less,
+      (HandValue::Hard(_), HandValue::Soft(_)) => cmp::Ordering::Greater,
       _ => u32::from(*self).cmp(&u32::from(*rhs)),
     }
   }
@@ -168,11 +248,31 @@ impl ops::AddAssign<Card> for HandValue {
   }
 }
 
-pub type Hand = Vec<Card>;
+pub type Hand = Deck;
 
-#[derive(Debug)]
+impl Hand {
+  pub fn is_blackjack(&self) -> bool {
+    *self
+      == Hand {
+        cards: [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        card_count: 2,
+      }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct CardMap<T> {
   array: [Option<T>; 10],
+}
+
+pub struct CardMapIter<'a, T> {
+  map: &'a CardMap<T>,
+  index: usize,
+}
+
+pub struct CardMapIterMut<'a, T> {
+  map: &'a mut CardMap<T>,
+  index: usize,
 }
 
 impl<T> CardMap<T> {
@@ -185,6 +285,50 @@ impl<T> CardMap<T> {
   pub fn set(&mut self, card: Card, val: T) {
     self.array[card as usize - 1] = Some(val)
   }
+
+  pub fn iter<'a>(&'a self) -> impl Iterator<Item = (Card, &'a T)> {
+    self.array.iter().enumerate().filter_map(|(i, x)| {
+      if let Some(y) = x {
+        Some((Card::from_usize(i + 1).unwrap(), y))
+      } else {
+        None
+      }
+    })
+  }
+
+  pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (Card, &'a mut T)> {
+    self.array.iter_mut().enumerate().filter_map(|(i, x)| {
+      if let Some(y) = x {
+        Some((Card::from_usize(i + 1).unwrap(), y))
+      } else {
+        None
+      }
+    })
+  }
+}
+
+impl<T> CardMap<T>
+where
+  T: Copy,
+{
+  pub fn fill(&mut self, val: T) {
+    self.array = [Some(val); 10];
+  }
+}
+
+impl<T> fmt::Display for CardMap<T>
+where
+  T: fmt::Debug,
+{
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    for (i, t) in self.array.iter().enumerate() {
+      match t {
+        None => write!(f, "{:?}: None ", Card::from_usize(i + 1).unwrap())?,
+        Some(x) => write!(f, "{:?}: {:?} ", Card::from_usize(i + 1).unwrap(), *x)?,
+      }
+    }
+    Ok(())
+  }
 }
 
 impl<T> ops::Index<Card> for CardMap<T> {
@@ -195,4 +339,13 @@ impl<T> ops::Index<Card> for CardMap<T> {
   }
 }
 
-pub type DealerProb = HashMap<HandValue, f64>;
+impl<T> Default for CardMap<T>
+where
+  T: Default + Copy,
+{
+  fn default() -> Self {
+    Self {
+      array: [Some(T::default()); 10],
+    }
+  }
+}
