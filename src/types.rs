@@ -35,7 +35,14 @@ pub struct DeckIterator<'a>(&'a Deck, usize, usize);
 pub struct RankIterator<'a>(&'a Deck, usize);
 
 impl Deck {
-  pub fn new(deck_count: usize) -> Self {
+  pub fn new() -> Self {
+    Deck {
+      cards: [0; 10],
+      card_count: 0,
+    }
+  }
+
+  pub fn generate(deck_count: usize) -> Self {
     let mut cards = [deck_count * 4; 10];
     cards[9] *= 4;
     Self {
@@ -58,6 +65,10 @@ impl Deck {
 
   pub fn get_count(&self) -> usize {
     self.card_count
+  }
+
+  pub fn is_subset(&self, other: &Self) -> bool {
+    self.card_count <= other.card_count && self.cards.iter().zip(&other.cards).all(|(s, o)| o >= s)
   }
 
   pub fn remove_cards(&mut self, cards: &[Card]) {
