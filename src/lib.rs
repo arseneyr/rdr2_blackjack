@@ -150,23 +150,30 @@ fn get_hit_ev(
             if card == up_card && new_deck.get_count_of_card(card) == 1 {
                 continue;
             }
-            possible_card_count += new_deck.get_count_of_card(card);
-            ev.set(
-                up_card,
-                ev[up_card].unwrap_or(0.0)
-                    + new_deck.get_count_of_card(card) as f64
-                        * match hand_value + card {
-                            HandValue::Hard(x) if x > 21 => -1.0,
-                            _ => {
-                                let hit_hand = all_hands.get(&(hand + card)).unwrap().borrow();
-                                //println!("{:?}", hit_hand);
-                                hit_hand.hit.as_ref().unwrap()[up_card]
-                                    .unwrap()
-                                    .max(hit_hand.stand[up_card].unwrap())
-                            }
-                        },
-            )
-
+            let card_count = new_deck.get_count_of_card(card);
+            match hand_value + card {
+                HandValue::Hard(x) if x > 21 => {
+                    possible_card_count += card_count;
+                    ev.set(up_card, ev[up_card].unwrap_or(0.0) - card_count as f64);
+                }
+                _ => {
+                    let hit_hand = all_hands.get(&(hand + card)).unwrap().borrow();
+                    possible_card_count += card_count;
+                    match (
+                        hit_hand.hit.as_ref().unwrap()[up_card],
+                        hit_hand.stand[up_card],
+                    ) {
+                        (Some(h), Some(s)) => ev.set(
+                            up_card,
+                            ev[up_card].unwrap_or(0.0) + card_count as f64 * h.max(s),
+                        ),
+                        (None, Some(s)) => {
+                            ev.set(up_card, ev[up_card].unwrap_or(0.0) + card_count as f64 * s)
+                        }
+                        _ => possible_card_count -= card_count,
+                    }
+                }
+            }
         }
         if let Some(x) = ev[up_card] {
             ev.set(up_card, x / possible_card_count as f64);

@@ -83,4 +83,5 @@ fn small_deck() {
     Card::Ten,
     Card::Ten,
   ]));
+  println!("{:?}", ev);
 }
