@@ -12,3 +12,6 @@ num-traits = "0.2"
 num-derive = "0.2"
 indexmap = "1.0"
 lib-dealer = {path = "lib-dealer"}
+
+[lib]
+name="lib_blackjack"

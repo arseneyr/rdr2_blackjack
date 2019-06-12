@@ -282,7 +282,7 @@ impl Hand {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardMap<T> {
   array: [Option<T>; 10],
 }
