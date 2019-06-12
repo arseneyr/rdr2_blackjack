@@ -138,6 +138,17 @@ impl<'a> From<&'a Deck> for &'a [usize; 10] {
   }
 }
 
+impl<T> From<T> for Deck
+where
+  T: AsRef<[Card]>,
+{
+  fn from(cards: T) -> Deck {
+    let mut ret = Deck::new();
+    ret.add_cards(cards.as_ref());
+    ret
+  }
+}
+
 impl<'a> Iterator for RankIterator<'a> {
   type Item = Card;
 
@@ -276,16 +287,6 @@ pub struct CardMap<T> {
   array: [Option<T>; 10],
 }
 
-pub struct CardMapIter<'a, T> {
-  map: &'a CardMap<T>,
-  index: usize,
-}
-
-pub struct CardMapIterMut<'a, T> {
-  map: &'a mut CardMap<T>,
-  index: usize,
-}
-
 impl<T> CardMap<T> {
   pub fn new() -> CardMap<T> {
     CardMap {
@@ -357,6 +358,40 @@ where
   fn default() -> Self {
     Self {
       array: [Some(T::default()); 10],
+    }
+  }
+}
+
+impl<'a, L, R, O> ops::Add<&'a CardMap<R>> for &'a CardMap<L>
+where
+  &'a L: ops::Add<&'a R, Output = O>,
+{
+  type Output = CardMap<O>;
+  fn add(self, rhs: &'a CardMap<R>) -> Self::Output {
+    let mut ret = CardMap::new();
+    for i in 0..self.array.len() {
+      if let (Some(x), Some(y)) = (&self.array[i], &rhs.array[i]) {
+        ret.array[i] = Some(x + y);
+      }
+    }
+    ret
+  }
+}
+
+impl<'a, L: 'a, R: 'a> ops::AddAssign<&'a CardMap<R>> for CardMap<L>
+where
+  L: ops::AddAssign<&'a R>,
+{
+  fn add_assign(&mut self, rhs: &'a CardMap<R>) {
+    for i in 0..self.array.len() {
+      /*if let (Some(x), Some(y)) = (self.array[i], &rhs.array[i]) {
+        self.array[i] = Some(x + y);
+      }*/
+      if let Some(x) = &mut self.array[i] {
+        if let Some(y) = &rhs.array[i] {
+          *x += y;
+        }
+      }
     }
   }
 }

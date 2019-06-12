@@ -1,17 +1,12 @@
 extern crate indexmap;
 extern crate strum_macros;
-extern crate lazy_static;
-
 
 mod dealer_prob;
-//mod sorted_hashmap;
 mod types;
 
 use lib_dealer::DealerProb;
 use std::cell::RefCell;
-use std::cell::RefMut;
 use std::cmp;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use indexmap::map::IndexMap;
@@ -19,14 +14,17 @@ use indexmap::map::IndexMap;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
+
+use dealer_prob::DealerProbCalculator;
 use strum::IntoEnumIterator;
 use types::{Card, CardMap, Deck, DeckIterator, Hand, HandValue};
+
 #[derive(Debug)]
 struct HandEV {
     hand: Hand,
     hand_value: HandValue,
     stand: CardMap<f64>,
-    hit: CardMap<f64>,
+    hit: Option<CardMap<f64>>,
     double: Option<CardMap<f64>>,
     split: Option<CardMap<f64>>,
 }
@@ -64,7 +62,7 @@ fn generate_hand(
                         hand: current_hand.clone(),
                         hand_value,
                         stand: CardMap::new(),
-                        hit: CardMap::new(),
+                        hit: None,
                         double: None,
                         split: None,
                     })),
@@ -84,7 +82,13 @@ fn generate_all_hands(deck: &Deck) -> IndexMap<Hand, Rc<RefCell<HandEV>>> {
     ret
 }
 
-fn get_stand_ev(deck: &Deck, hand: &Hand, hand_value: HandValue) -> CardMap<f64> {
+fn get_stand_ev(
+    dealer_calc: &mut DealerProbCalculator,
+    deck: &Deck,
+    hand: &Hand,
+    hand_value: HandValue,
+    is_split: bool,
+) -> CardMap<f64> {
     let mut ev = CardMap::new();
     for (
         c,
@@ -97,13 +101,13 @@ fn get_stand_ev(deck: &Deck, hand: &Hand, hand_value: HandValue) -> CardMap<f64>
             p_bust,
             p_bj,
         },
-    ) in dealer_prob::calculate_dealer_prob(deck).iter()
+    ) in dealer_calc.calculate(deck).iter()
     {
         if deck.get_count_of_card(c) == 0 {
             continue;
         }
 
-        if hand.is_blackjack() {
+        if !is_split && hand.is_blackjack() {
             ev.set(c, 1.5 * (1.0 - p_bj));
             continue;
         }
@@ -154,7 +158,8 @@ fn get_hit_ev(
                             HandValue::Hard(x) if x > 21 => -1.0,
                             _ => {
                                 let hit_hand = all_hands.get(&(hand + card)).unwrap().borrow();
-                                hit_hand.hit[up_card]
+                                println!("{:?}", hit_hand);
+                                hit_hand.hit.as_ref().unwrap()[up_card]
                                     .unwrap()
                                     .max(hit_hand.stand[up_card].unwrap())
                             }
@@ -198,6 +203,7 @@ fn get_double_ev(
             }
             _ => (),
         }
+
         for card in new_deck.rank_iter() {
             if card == up_card && new_deck.get_count_of_card(card) == 1 {
                 continue;
@@ -220,24 +226,27 @@ fn get_double_ev(
 }
 
 fn get_split_ev_inner(
+
+    dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, Rc<RefCell<HandEV>>>,
     pair_card: Card,
     recurse: bool,
 ) -> CardMap<f64> {
 
-    let mut ev = CardMap::new();
+    let mut ev: CardMap<f64> = CardMap::new();
+    let deck = &(deck + pair_card);
     let split_hands: IndexMap<Hand, Rc<RefCell<HandEV>>> = all_hands
         .iter()
         .filter_map(|(h, hev)| {
-            if h.is_subset(deck) && h.get_count_of_card(pair_card) > 0 {
+            if (deck - h).is_some() && h.get_count_of_card(pair_card) > 0 {
                 Some((
                     h.clone(),
                     Rc::new(RefCell::new(HandEV {
                         hand: h.clone(),
                         hand_value: hev.borrow().hand_value,
                         stand: CardMap::default(),
-                        hit: CardMap::default(),
+                        hit: None,
                         double: None,
                         split: None,
                     })),
@@ -249,20 +258,75 @@ fn get_split_ev_inner(
         .collect();
 
     for hand_ev in split_hands.values() {
-        let hand = &hand_ev.borrow().hand;
-        let new_deck = (deck - hand).unwrap();
-        let hand_value = hand_ev.borrow().hand_value;
-        let stand = get_stand_ev(&new_deck, hand, hand_value);
-        let stand = get_hit_ev(&new_deck, &split_hands, hand, hand_value);
+        let mut stand;
+        let mut hit = None;
+        let mut double = None;
+        {
+            let hand_ev = hand_ev.borrow();
+            let HandEV {
+                hand, hand_value, ..
+            } = hand_ev.deref();
+            let new_deck = (deck - &*hand).unwrap();
+            stand = get_stand_ev(dealer_calc, &new_deck, &hand, *hand_value, true);
+            if pair_card != Card::Ace {
+                hit = Some(get_hit_ev(&new_deck, &split_hands, &hand, *hand_value));
+                double = get_double_ev(&new_deck, &split_hands, &hand, *hand_value);
+            }
 
-        if recurse {
-            let other_hand_ev = get_split_ev_inner(&new_deck, &split_hands, pair_card, false);
+            if recurse {
+                stand +=
+                    &get_split_ev_inner(dealer_calc, &new_deck, &split_hands, pair_card, false);
+            }
+        }
+        let mut hand_ev = hand_ev.borrow_mut();
+        hand_ev.stand = stand;
+        hand_ev.hit = hit;
+        hand_ev.double = double;
+    }
+    let deck = &(deck - pair_card).unwrap();
+    for up_card in deck.rank_iter() {
+        let new_deck = (deck - up_card).unwrap();
+        for player_card in new_deck.rank_iter() {
+            let hand_ev = split_hands
+                .get(&Hand::from([pair_card, player_card]))
+                .unwrap()
+                .borrow();
+            if hand_ev.stand[up_card] == None {
+                continue;
+            }
+            ev.set(
+                up_card,
+                ev[up_card].unwrap_or(0.0)
+                    + (new_deck.get_count_of_card(player_card) as f64
+                        / new_deck.get_count() as f64)
+                        * match hand_ev.deref() {
+                            HandEV {
+                                stand,
+                                hit: Some(h),
+                                double: Some(d),
+                                ..
+                            } => stand[up_card]
+                                .unwrap()
+                                .max(h[up_card].unwrap_or(std::f64::MIN))
+                                .max(d[up_card].unwrap_or(std::f64::MIN)),
+                            HandEV {
+                                stand,
+                                hit: Some(h),
+                                ..
+                            } => stand[up_card]
+                                .unwrap()
+                                .max(h[up_card].unwrap_or(std::f64::MIN)),
+                            HandEV { stand, .. } => stand[up_card].unwrap(),
+                        },
+            )
         }
     }
     ev
 }
 
 fn get_split_ev(
+
+    dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, Rc<RefCell<HandEV>>>,
     hand: &Hand,
@@ -272,40 +336,88 @@ fn get_split_ev(
     if hand.get_count() != 2 || pair_card != hand.iter().nth(1).unwrap() {
         return None;
     };
-    Some(get_split_ev_inner(deck, all_hands, pair_card, true))
+    let mut ev = get_split_ev_inner(dealer_calc, deck, all_hands, pair_card, true);
+
+    // Account for dealer blackjack
+    match (
+        deck.get_count_of_card(Card::Ten),
+        deck.get_count_of_card(Card::Ace),
+        deck.get_count(),
+    ) {
+        (t, a, d) if t > 0 && a > 0 => {
+            ev.set(
+                Card::Ten,
+                ev[Card::Ten].unwrap() + a as f64 / (d - 1) as f64,
+            );
+            ev.set(
+                Card::Ace,
+                ev[Card::Ace].unwrap() + t as f64 / (d - 1) as f64,
+            );
+        }
+        _ => (),
+    }
+    Some(ev)
 }
 
 fn process_hand(
+    dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, Rc<RefCell<HandEV>>>,
     hand_ev: &RefCell<HandEV>,
 ) {
-    let mut stand;
-    let mut hit;
-    let mut double;
-    let mut split;
+    let stand;
+    let hit;
+    let double;
+    let split;
     {
         let hand = &hand_ev.borrow().hand;
         let hand_value = hand_ev.borrow().hand_value;
 
         let deck = (deck - hand).unwrap();
-        stand = get_stand_ev(&deck, hand, hand_value);
+        stand = get_stand_ev(dealer_calc, &deck, hand, hand_value, false);
         hit = get_hit_ev(&deck, all_hands, hand, hand_value);
         double = get_double_ev(&deck, all_hands, hand, hand_value);
-        split = get_split_ev(&deck, all_hands, hand);
+        split = get_split_ev(dealer_calc, &deck, all_hands, hand);
     }
 
     let mut hand_ev = hand_ev.borrow_mut();
     let hand_ev = hand_ev.deref_mut();
     hand_ev.stand = stand;
-    hand_ev.hit = hit;
+    hand_ev.hit = Some(hit);
     hand_ev.double = double;
     hand_ev.split = split;
 }
 
 
 fn main() {
-    let deck = Deck::generate(1);
+    let mut dealer_calc = DealerProbCalculator::new();
+    //let deck = Deck::generate(1);
+    let deck = Deck::from([
+        //Card::Ace,
+        //Card::Two,
+        //Card::Three,
+        // Card::Four,
+        //Card::Five,
+        // Card::Six,
+        // Card::Seven,
+        Card::Eight,
+        //Card::Nine,
+        Card::Nine,
+        Card::Nine,
+        Card::Nine,
+        Card::Ten,
+        Card::Ten,
+        /*Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,
+        Card::Ten,*/
+    ]);
     let mut hands = generate_all_hands(&deck);
     hands.sort_by(|_, a, _, b| {
         match (a.borrow().hand_value, b.borrow().hand_value) {
@@ -318,11 +430,23 @@ fn main() {
         .reverse()
     });
     for hand in hands.values() {
-        process_hand(&deck, &hands, hand);
+        process_hand(&mut dealer_calc, &deck, &hands, hand);
     }
-    for h in hands.values().filter(|x| x.borrow().hand.get_count() == 2) {
+    /*for h in hands
+        .values()
+        .filter(|x| x.borrow().hand.get_count() == 2 && x.borrow().split.is_some())
+    {
         println!("{:?}", h.borrow());
-    }
+    }*/
+    let test_val = hands
+        .get(&Hand::from([Card::Nine, Card::Nine]))
+        .unwrap()
+        .borrow()
+        .split
+        .as_ref()
+        .unwrap()[Card::Nine]
+        .unwrap();
+    assert_eq!(1.21266155585, test_val);
     /*println!(
         "{:?}",
         hands
