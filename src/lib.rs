@@ -30,14 +30,6 @@ pub struct HandEV {
     pub split: Option<CardMap<f64>>,
 }
 
-fn get_hand_value(hand: &Hand) -> HandValue {
-    let mut sum: HandValue = HandValue::Hard(0);
-    for card in hand.iter() {
-        sum += card;
-    }
-    sum
-}
-
 fn generate_hand(
     all_hands: &mut IndexMap<Hand, RefCell<HandEV>>,
     current_hand: &mut Hand,
@@ -52,7 +44,7 @@ fn generate_hand(
             (None, _) => break,
             _ => continue,
         };
-        let hand_value = get_hand_value(&current_hand) + card.unwrap();
+        let hand_value = current_hand.get_hand_value() + card.unwrap();
         match hand_value {
             HandValue::Hard(x) if x > 21 => continue,
             v @ _ => {
@@ -234,7 +226,6 @@ fn get_double_ev(
 }
 
 fn get_split_ev_inner(
-
     dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
@@ -247,7 +238,7 @@ fn get_split_ev_inner(
     let split_hands: IndexMap<Hand, RefCell<HandEV>> = all_hands
         .iter()
         .filter_map(|(h, hev)| {
-            if (deck - h).is_some() && h.get_count_of_card(pair_card) > 0 {
+            if (deck - h).is_some() && h.get_count_of_card(pair_card) > 0 && h.get_count() >= 2 {
                 Some((
                     h.clone(),
                     RefCell::new(HandEV {

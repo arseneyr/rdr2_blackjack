@@ -74,8 +74,18 @@ fn standard() {
 }
 
 #[test]
+fn split() {
+  let ev = compute_all_hand_ev(&create_standard_deck());
+  let nine_nine = ev.get(&Hand::from([Card::Nine, Card::Nine])).unwrap();
+  assert_eq!(
+    (nine_nine.split.as_ref().unwrap()[Card::Six].unwrap() * 1000.0).round() / 1000.0,
+    1.213
+  );
+}
+
+#[test]
 fn small_deck() {
-  let ev = compute_all_hand_ev(&Deck::from([
+  let mut ev = compute_all_hand_ev(&Deck::from([
     Card::Eight,
     Card::Nine,
     Card::Nine,
@@ -83,5 +93,18 @@ fn small_deck() {
     Card::Ten,
     Card::Ten,
   ]));
-  println!("{:?}", ev);
+  let mut split_compare = CardMap::new();
+  split_compare.set(Card::Eight, 1.333);
+  split_compare.set(Card::Nine, 0.0);
+  split_compare.set(Card::Ten, -0.667);
+  let split = ev
+    .get_mut(&Deck::from([Card::Nine, Card::Nine]))
+    .unwrap()
+    .split
+    .as_mut()
+    .unwrap();
+  for (_, ev) in split.iter_mut() {
+    *ev = (*ev * 1000.0).round() / 1000.0;
+  }
+  assert_eq!(*split, split_compare);
 }

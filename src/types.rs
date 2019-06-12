@@ -84,6 +84,14 @@ impl Deck {
       self.card_count += 1;
     }
   }
+
+  pub fn get_hand_value(&self) -> HandValue {
+    let mut ret = HandValue::Hard(0);
+    for card in self.iter() {
+      ret += card;
+    }
+    ret
+  }
 }
 
 impl ops::Sub for &Deck {
