@@ -22,12 +22,13 @@ use types::DeckIterator;
 
 #[derive(Debug, PartialEq)]
 pub struct HandEV {
-    pub hand: Hand,
-    pub hand_value: HandValue,
+    hand: Hand,
+    hand_value: HandValue,
     pub stand: CardMap<f64>,
     pub hit: Option<CardMap<f64>>,
     pub double: Option<CardMap<f64>>,
     pub split: Option<CardMap<f64>>,
+    other_split_ev: Option<CardMap<f64>>,
 }
 
 fn generate_hand(
@@ -58,6 +59,7 @@ fn generate_hand(
                         hit: None,
                         double: None,
                         split: None,
+                        other_split_ev: None,
                     }),
                 );
                 if v != HandValue::Hard(21) {
@@ -127,6 +129,7 @@ fn get_hit_ev(
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
     hand: &Hand,
     hand_value: HandValue,
+    split_ev: &CardMap<f64>,
 ) -> CardMap<f64> {
     let mut ev = CardMap::new();
 
@@ -139,14 +142,15 @@ fn get_hit_ev(
         let mut possible_card_count = 0;
         let new_deck = (deck - up_card).unwrap();
         for card in new_deck.rank_iter() {
-            if card == up_card && new_deck.get_count_of_card(card) == 1 {
-                continue;
-            }
             let card_count = new_deck.get_count_of_card(card);
             match hand_value + card {
                 HandValue::Hard(x) if x > 21 => {
                     possible_card_count += card_count;
-                    ev.set(up_card, ev[up_card].unwrap_or(0.0) - card_count as f64);
+                    ev.set(
+                        up_card,
+                        ev[up_card].unwrap_or(0.0)
+                            + (-1.0 + split_ev[up_card].unwrap_or(0.0)) * card_count as f64,
+                    );
                 }
                 _ => {
                     let hit_hand = all_hands.get(&(hand + card)).unwrap().borrow();
@@ -154,14 +158,30 @@ fn get_hit_ev(
                     match (
                         hit_hand.hit.as_ref().unwrap()[up_card],
                         hit_hand.stand[up_card],
+                        hit_hand.other_split_ev.as_ref(),
                     ) {
-                        (Some(h), Some(s)) => ev.set(
+                        (Some(h), Some(s), o) => ev.set(
                             up_card,
-                            ev[up_card].unwrap_or(0.0) + card_count as f64 * h.max(s),
+                            ev[up_card].unwrap_or(0.0)
+                                + card_count as f64
+                                    * h.max(
+                                        s + if let Some(o) = o {
+                                            o[up_card].unwrap_or(0.0)
+                                        } else {
+                                            0.0
+                                        },
+                                    ),
                         ),
-                        (None, Some(s)) => {
-                            ev.set(up_card, ev[up_card].unwrap_or(0.0) + card_count as f64 * s)
-                        }
+                        (None, Some(s), o) => ev.set(
+                            up_card,
+                            ev[up_card].unwrap_or(0.0)
+                                + card_count as f64
+                                    * (s + if let Some(o) = o {
+                                        o[up_card].unwrap_or(0.0)
+                                    } else {
+                                        0.0
+                                    }),
+                        ),
                         _ => possible_card_count -= card_count,
                     }
                 }
@@ -179,6 +199,7 @@ fn get_double_ev(
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
     hand: &Hand,
     hand_value: HandValue,
+    split_ev: &CardMap<f64>,
 ) -> Option<CardMap<f64>> {
     if hand.get_count() != 2 || hand.is_blackjack() {
         return None;
@@ -205,17 +226,19 @@ fn get_double_ev(
         }
 
         for card in new_deck.rank_iter() {
-            if card == up_card && new_deck.get_count_of_card(card) == 1 {
-                continue;
-            }
             ev.set(
                 up_card,
                 ev[up_card].unwrap_or(0.0)
                     + match hand_value + card {
-                        HandValue::Hard(x) if x > 21 => -2.0,
+                        HandValue::Hard(x) if x > 21 => -2.0 + split_ev[up_card].unwrap_or(0.0),
                         _ => {
-                            all_hands.get(&(hand + card)).unwrap().borrow().stand[up_card].unwrap()
-                                * 2.0
+                            let hit_hand = all_hands.get(&(hand + card)).unwrap().borrow();
+                            hit_hand.stand[up_card].unwrap() * 2.0
+                                + if let Some(o) = hit_hand.other_split_ev.as_ref() {
+                                    o[up_card].unwrap_or(0.0)
+                                } else {
+                                    0.0
+                                }
                         }
                     } * (new_deck.get_count_of_card(card) as f64 / new_deck.get_count() as f64),
             )
@@ -248,6 +271,7 @@ fn get_split_ev_inner(
                         hit: None,
                         double: None,
                         split: None,
+                        other_split_ev: None,
                     }),
                 ))
             } else {
@@ -260,6 +284,7 @@ fn get_split_ev_inner(
         let mut stand;
         let mut hit = None;
         let mut double = None;
+        let mut other_split_ev = None;
         {
             let hand_ev = hand_ev.borrow();
             let HandEV {
@@ -267,20 +292,53 @@ fn get_split_ev_inner(
             } = hand_ev.deref();
             let new_deck = (deck - &*hand).unwrap();
             stand = get_stand_ev(dealer_calc, &new_deck, &hand, *hand_value, true);
-            if pair_card != Card::Ace {
-                hit = Some(get_hit_ev(&new_deck, &split_hands, &hand, *hand_value));
-                double = get_double_ev(&new_deck, &split_hands, &hand, *hand_value);
-            }
+
 
             if recurse {
-                stand +=
-                    &get_split_ev_inner(dealer_calc, &new_deck, &split_hands, pair_card, false);
+                other_split_ev = Some(get_split_ev_inner(
+                    dealer_calc,
+                    &new_deck,
+                    &split_hands,
+                    pair_card,
+                    false,
+                ));
+                /*println!(
+                    "PairCard: {:?}\nHand: {:?}\nDeck: {:?}\nStand: {:?}\nHit: {:?}\nDouble: {:?}\nOtherEV: {:?}\n",
+                    pair_card, hand, new_deck, stand, hit, double, other_ev
+                );*/
+                if pair_card != Card::Ace {
+                    hit = Some(get_hit_ev(
+                        &new_deck,
+                        &split_hands,
+                        &hand,
+                        *hand_value,
+                        other_split_ev.as_ref().unwrap(),
+                    ));
+                    double = get_double_ev(
+                        &new_deck,
+                        &split_hands,
+                        &hand,
+                        *hand_value,
+                        other_split_ev.as_ref().unwrap(),
+                    );
+                }
+            } else if pair_card != Card::Ace {
+                hit = Some(get_hit_ev(
+                    &new_deck,
+                    &split_hands,
+                    &hand,
+                    *hand_value,
+                    &CardMap::new(),
+                ));
+                double =
+                    get_double_ev(&new_deck, &split_hands, &hand, *hand_value, &CardMap::new());
             }
         }
         let mut hand_ev = hand_ev.borrow_mut();
         hand_ev.stand = stand;
         hand_ev.hit = hit;
         hand_ev.double = double;
+        hand_ev.other_split_ev = other_split_ev;
     }
     let deck = &(deck - pair_card).unwrap();
     for up_card in deck.rank_iter() {
@@ -303,19 +361,40 @@ fn get_split_ev_inner(
                                 stand,
                                 hit: Some(h),
                                 double: Some(d),
+                                other_split_ev: o,
                                 ..
-                            } => stand[up_card]
-                                .unwrap()
-                                .max(h[up_card].unwrap_or(std::f64::MIN))
-                                .max(d[up_card].unwrap_or(std::f64::MIN)),
+                            } => (stand[up_card].unwrap()
+                                + if let Some(o) = o {
+                                    o[up_card].unwrap_or(0.0)
+                                } else {
+                                    0.0
+                                })
+                            .max(h[up_card].unwrap_or(std::f64::MIN))
+                            .max(d[up_card].unwrap_or(std::f64::MIN)),
                             HandEV {
                                 stand,
                                 hit: Some(h),
+                                other_split_ev: o,
                                 ..
-                            } => stand[up_card]
-                                .unwrap()
-                                .max(h[up_card].unwrap_or(std::f64::MIN)),
-                            HandEV { stand, .. } => stand[up_card].unwrap(),
+                            } => (stand[up_card].unwrap()
+                                + if let Some(o) = o {
+                                    o[up_card].unwrap_or(0.0)
+                                } else {
+                                    0.0
+                                })
+                            .max(h[up_card].unwrap_or(std::f64::MIN)),
+                            HandEV {
+                                stand,
+                                other_split_ev: o,
+                                ..
+                            } => {
+                                (stand[up_card].unwrap()
+                                    + if let Some(o) = o {
+                                        o[up_card].unwrap_or(0.0)
+                                    } else {
+                                        0.0
+                                    })
+                            }
                         },
             )
         }
@@ -374,8 +453,8 @@ fn process_hand(
 
         let deck = (deck - hand).unwrap();
         stand = get_stand_ev(dealer_calc, &deck, hand, hand_value, false);
-        hit = get_hit_ev(&deck, all_hands, hand, hand_value);
-        double = get_double_ev(&deck, all_hands, hand, hand_value);
+        hit = get_hit_ev(&deck, all_hands, hand, hand_value, &CardMap::new());
+        double = get_double_ev(&deck, all_hands, hand, hand_value, &CardMap::new());
         split = get_split_ev(dealer_calc, &deck, all_hands, hand);
     }
 

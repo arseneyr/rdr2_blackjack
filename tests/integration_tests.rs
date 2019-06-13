@@ -42,6 +42,7 @@ fn standard() {
   stand.set(Card::Eight, -0.8101503759398495);
   stand.set(Card::Nine, -0.7619604566972985);
   stand.set(Card::Ten, -0.7737399053188528);
+  assert_eq!(four_six.stand, stand);
   let mut hit = CardMap::new();
   hit.set(Card::Ace, -0.48962848297213635);
   hit.set(Card::Two, 0.33716562648451204);
@@ -51,6 +52,7 @@ fn standard() {
   hit.set(Card::Eight, 0.5671630055530985);
   hit.set(Card::Nine, 0.3955726735138499);
   hit.set(Card::Ten, -0.003441201041820277);
+  assert_eq!(*four_six.hit.as_ref().unwrap(), hit);
   let mut double = CardMap::new();
   double.set(Card::Ace, -0.41047553524333746);
   double.set(Card::Two, 0.6743312529690241);
@@ -60,23 +62,14 @@ fn standard() {
   double.set(Card::Eight, 1.1029223385260538);
   double.set(Card::Nine, 0.7633782167837894);
   double.set(Card::Ten, 0.008256752993595018);
-  assert_eq!(
-    *four_six,
-    HandEV {
-      hand: Hand::from([Card::Four, Card::Six]),
-      hand_value: HandValue::Hard(10),
-      stand,
-      hit: Some(hit),
-      double: Some(double),
-      split: None
-    }
-  );
+  assert_eq!(*four_six.double.as_ref().unwrap(), double);
 }
 
 #[test]
 fn split() {
   let ev = compute_all_hand_ev(&create_standard_deck());
   let nine_nine = ev.get(&Hand::from([Card::Nine, Card::Nine])).unwrap();
+  println!("{:?}", nine_nine);
   assert_eq!(
     (nine_nine.split.as_ref().unwrap()[Card::Six].unwrap() * 1000.0).round() / 1000.0,
     1.213
@@ -107,4 +100,37 @@ fn small_deck() {
     *ev = (*ev * 1000.0).round() / 1000.0;
   }
   assert_eq!(*split, split_compare);
+}
+
+#[test]
+fn another_one() {
+  let mut ev = compute_all_hand_ev(&Deck::from([
+    Card::Ace,
+    Card::Two,
+    Card::Three,
+    Card::Four,
+    Card::Five,
+    Card::Six,
+    Card::Seven,
+    Card::Eight,
+    Card::Eight,
+    Card::Eight,
+    Card::Eight,
+    Card::Nine,
+    Card::Nine,
+    Card::Nine,
+    Card::Nine,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+    Card::Ten,
+  ]));
+  println!(
+    "{:?}",
+    ev.get(&Deck::from([Card::Nine, Card::Nine])).unwrap()
+  );
 }
