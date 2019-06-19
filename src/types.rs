@@ -3,7 +3,6 @@ use num_traits::FromPrimitive;
 
 use std::cmp;
 
-use std::collections::HashMap;
 use std::fmt;
 use std::mem;
 use std::ops;
@@ -92,6 +91,10 @@ impl Deck {
     }
     ret
   }
+
+  pub fn get_card_prob(&self, card: &Card) -> f64 {
+    self.cards[*card as usize - 1] as f64 / self.card_count as f64
+  }
 }
 
 impl ops::Sub for &Deck {
@@ -137,6 +140,22 @@ impl ops::Add<Card> for &Deck {
     ret.card_count += 1;
     ret.cards[rhs as usize - 1] += 1;
     ret
+  }
+}
+
+impl ops::AddAssign<Card> for Deck {
+  fn add_assign(&mut self, rhs: Card) {
+    self.cards[rhs as usize - 1] += 1;
+    self.card_count += 1;
+  }
+}
+
+impl ops::SubAssign<Card> for Deck {
+  fn sub_assign(&mut self, rhs: Card) {
+    self.cards[rhs as usize - 1] = self.cards[rhs as usize - 1]
+      .checked_sub(1)
+      .expect("Deck underflow");
+    self.card_count = self.card_count.checked_sub(1).expect("Deck underflow");
   }
 }
 

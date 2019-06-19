@@ -103,34 +103,9 @@ fn small_deck() {
 }
 
 #[test]
-fn another_one() {
-  let mut ev = compute_all_hand_ev(&Deck::from([
-    Card::Ace,
-    Card::Two,
-    Card::Three,
-    Card::Four,
-    Card::Five,
-    Card::Six,
-    Card::Seven,
-    Card::Eight,
-    Card::Eight,
-    Card::Eight,
-    Card::Eight,
-    Card::Nine,
-    Card::Nine,
-    Card::Nine,
-    Card::Nine,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-    Card::Ten,
-  ]));
-  println!(
-    "{:?}",
-    ev.get(&Deck::from([Card::Nine, Card::Nine])).unwrap()
-  );
+fn overall_ev() {
+  let deck = &Deck::generate(1);
+  let ev = compute_all_hand_ev(deck);
+  let p = compute_overall_prob(deck, &ev);
+  println!("{}", p);
 }
