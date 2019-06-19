@@ -1,5 +1,15 @@
-use lib_blackjack::{compute_all_hand_ev, Deck};
+use lib_blackjack::{Card, Deck, Hand, SpecificHandEV};
 
 fn main() {
-  compute_all_hand_ev(&Deck::generate(1));
+  let mut deck = Deck::generate(1);
+  deck.remove_cards(&[Card::Ace, Card::Ace, Card::Ten]);
+  println!(
+    "{:?}",
+    SpecificHandEV::create(
+      &deck,
+      &Hand::from(&[Card::Ace, Card::Ace]),
+      Card::Ten
+    )
+    .split
+  );
 }

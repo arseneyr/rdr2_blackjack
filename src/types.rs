@@ -143,6 +143,20 @@ impl ops::Add<Card> for &Deck {
   }
 }
 
+impl ops::Add for &Deck {
+  type Output = Deck;
+  fn add(self, rhs: &Deck) -> Self::Output {
+
+    let mut ret = self.clone();
+    ret.card_count += rhs.card_count;
+    
+    for i in 0..self.cards.len() {
+      ret.cards[i] = self.cards[i] + rhs.cards[i];
+    }
+    ret
+  }
+}
+
 impl ops::AddAssign<Card> for Deck {
   fn add_assign(&mut self, rhs: Card) {
     self.cards[rhs as usize - 1] += 1;

@@ -443,10 +443,16 @@ fn process_hand(
     hand_ev.split = split;
 }
 
-
-pub fn compute_all_hand_ev(starting_deck: &Deck) -> HashMap<Hand, HandEV> {
+fn compute_ev(starting_deck: &Deck, hand_subset: Option<&Hand>) -> HashMap<Hand, HandEV> {
     let mut dealer_calc = DealerProbCalculator::new();
     let mut hands = generate_all_hands(&starting_deck);
+    if let Some(hs) = hand_subset {
+        if hs.get_count() == 2 && hs.iter().nth(0).unwrap() == hs.iter().nth(1).unwrap() {
+            hands.retain(|h, _| Deck::from(&[hs.iter().nth(0).unwrap()]).is_subset(h));
+        } else {
+            hands.retain(|h, _| hs.is_subset(h));
+        }
+    }
     hands.sort_by(|_, a, _, b| {
         match (a.borrow().hand_value, b.borrow().hand_value) {
             // We must process all the soft values before doing any of the hard
@@ -464,6 +470,10 @@ pub fn compute_all_hand_ev(starting_deck: &Deck) -> HashMap<Hand, HandEV> {
         .into_iter()
         .map(|(h, hev)| (h, hev.into_inner()))
         .collect::<HashMap<Hand, HandEV>>()
+}
+
+pub fn compute_all_hand_ev(starting_deck: &Deck) -> HashMap<Hand, HandEV> {
+    compute_ev(starting_deck, None)
 }
 
 //0.0015485589837292632 for standard deck
@@ -509,4 +519,50 @@ pub fn compute_overall_prob(deck: &Deck, evs: &HashMap<Hand, HandEV>) -> f64 {
         ret += upcard_ev * deck.get_card_prob(&up_card);
     }
     ret
+}
+
+#[derive(Debug)]
+pub struct SpecificHandEV {
+    pub stand: Option<f64>,
+    pub hit: Option<f64>,
+    pub double: Option<f64>,
+    pub split: Option<f64>,
+    dealer_card: Card,
+    current_hand: Hand,
+    all_evs: HashMap<Hand, HandEV>,
+}
+
+impl SpecificHandEV {
+    fn update_probs(&mut self) {
+        let ev = self.all_evs.get(&self.current_hand);
+        self.stand = ev.and_then(|x| x.stand[self.dealer_card]);
+        self.hit = ev
+            .and_then(|x| x.hit.as_ref())
+            .and_then(|x| x[self.dealer_card]);
+        self.double = ev
+            .and_then(|x| x.double.as_ref())
+            .and_then(|x| x[self.dealer_card]);
+        self.split = ev
+            .and_then(|x| x.split.as_ref())
+            .and_then(|x| x[self.dealer_card]);
+    }
+
+    pub fn create(remaining_deck: &Deck, hand: &Hand, dealer_card: Card) -> SpecificHandEV {
+        let all_evs = compute_ev(&(&(remaining_deck + hand) + dealer_card), Some(hand));
+        let mut ret = SpecificHandEV {
+            stand: None,
+            hit: None,
+            double: None,
+            split: None,
+            dealer_card,
+            current_hand: hand.clone(),
+            all_evs,
+        };
+        ret.update_probs();
+        ret
+    }
+    pub fn add_card_to_hand(&mut self, card: Card) {
+        self.current_hand += card;
+        self.update_probs();
+    }
 }

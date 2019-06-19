@@ -101,11 +101,3 @@ fn small_deck() {
   }
   assert_eq!(*split, split_compare);
 }
-
-#[test]
-fn overall_ev() {
-  let deck = &Deck::generate(1);
-  let ev = compute_all_hand_ev(deck);
-  let p = compute_overall_prob(deck, &ev);
-  println!("{}", p);
-}
