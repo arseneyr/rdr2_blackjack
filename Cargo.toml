@@ -1,5 +1,5 @@
 [package]
-name = "rust-playground"
+name = "rdr2-bj"
 version = "0.1.0"
 authors = ["AR <arseneyr@users.noreply.github.com>"]
 edition = "2018"
