@@ -82,6 +82,7 @@ fn get_stand_ev(
     hand: &Hand,
     hand_value: HandValue,
     is_split: bool,
+    no_blackjack: bool,
 ) -> CardMap<f64> {
     let mut ev = CardMap::new();
     for (
@@ -101,6 +102,8 @@ fn get_stand_ev(
             continue;
         }
 
+
+        let p_bj = if no_blackjack { 0.0 } else { *p_bj };
         if !is_split && hand.is_blackjack() {
             ev.set(c, 1.5 * (1.0 - p_bj));
             continue;
@@ -190,6 +193,7 @@ fn get_double_ev(
     hand: &Hand,
     hand_value: HandValue,
     split_ev: Option<&CardMap<f64>>,
+    no_blackjack: bool,
 ) -> Option<CardMap<f64>> {
     if hand.get_count() != 2 || hand.is_blackjack() {
         return None;
@@ -199,20 +203,22 @@ fn get_double_ev(
 
     for up_card in deck.rank_iter() {
         let new_deck = (deck - up_card).unwrap();
-        match up_card {
-            Card::Ace => {
-                ev.set(
-                    Card::Ace,
-                    new_deck.get_count_of_card(Card::Ten) as f64 / new_deck.get_count() as f64,
-                );
+        if !no_blackjack {
+            match up_card {
+                Card::Ace => {
+                    ev.set(
+                        Card::Ace,
+                        new_deck.get_count_of_card(Card::Ten) as f64 / new_deck.get_count() as f64,
+                    );
+                }
+                Card::Ten => {
+                    ev.set(
+                        Card::Ten,
+                        new_deck.get_count_of_card(Card::Ace) as f64 / new_deck.get_count() as f64,
+                    );
+                }
+                _ => (),
             }
-            Card::Ten => {
-                ev.set(
-                    Card::Ten,
-                    new_deck.get_count_of_card(Card::Ace) as f64 / new_deck.get_count() as f64,
-                );
-            }
-            _ => (),
         }
 
         for card in new_deck.rank_iter() {
@@ -239,12 +245,14 @@ fn get_double_ev(
     Some(ev)
 }
 
+
 fn get_split_ev_inner(
     dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
     pair_card: Card,
     recurse: bool,
+    no_blackjack: bool,
 ) -> CardMap<f64> {
 
     let mut ev: CardMap<f64> = CardMap::new();
@@ -282,7 +290,14 @@ fn get_split_ev_inner(
                 hand, hand_value, ..
             } = hand_ev.deref();
             let new_deck = (deck - &*hand).unwrap();
-            stand = get_stand_ev(dealer_calc, &new_deck, &hand, *hand_value, true);
+            stand = get_stand_ev(
+                dealer_calc,
+                &new_deck,
+                &hand,
+                *hand_value,
+                true,
+                no_blackjack,
+            );
 
 
             if recurse {
@@ -292,6 +307,7 @@ fn get_split_ev_inner(
                     &split_hands,
                     pair_card,
                     false,
+                    no_blackjack,
                 ));
             }
             if pair_card != Card::Ace {
@@ -308,6 +324,7 @@ fn get_split_ev_inner(
                     &hand,
                     *hand_value,
                     other_split_ev.as_ref(),
+                    no_blackjack,
                 );
             }
         }
@@ -338,39 +355,33 @@ fn get_split_ev_inner(
                                 stand,
                                 hit: Some(h),
                                 double: Some(d),
-                                other_split_ev: o,
+                                other_split_ev,
                                 ..
                             } => (stand[up_card].unwrap()
-                                + if let Some(o) = o {
-                                    o[up_card].unwrap_or(0.0)
-                                } else {
-                                    0.0
-                                })
+                                + other_split_ev
+                                    .as_ref()
+                                    .map_or(0.0, |o| o[up_card].unwrap_or(0.0)))
                             .max(h[up_card].unwrap_or(std::f64::MIN))
                             .max(d[up_card].unwrap_or(std::f64::MIN)),
                             HandEV {
                                 stand,
                                 hit: Some(h),
-                                other_split_ev: o,
+                                other_split_ev,
                                 ..
                             } => (stand[up_card].unwrap()
-                                + if let Some(o) = o {
-                                    o[up_card].unwrap_or(0.0)
-                                } else {
-                                    0.0
-                                })
+                                + other_split_ev
+                                    .as_ref()
+                                    .map_or(0.0, |o| o[up_card].unwrap_or(0.0)))
                             .max(h[up_card].unwrap_or(std::f64::MIN)),
                             HandEV {
                                 stand,
-                                other_split_ev: o,
+                                other_split_ev,
                                 ..
                             } => {
                                 (stand[up_card].unwrap()
-                                    + if let Some(o) = o {
-                                        o[up_card].unwrap_or(0.0)
-                                    } else {
-                                        0.0
-                                    })
+                                    + other_split_ev
+                                        .as_ref()
+                                        .map_or(0.0, |o| o[up_card].unwrap_or(0.0)))
                             }
                         },
             )
@@ -384,36 +395,40 @@ fn get_split_ev(
     deck: &Deck,
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
     hand: &Hand,
+    no_blackjack: bool,
 ) -> Option<CardMap<f64>> {
 
     let pair_card = hand.iter().nth(0).unwrap();
     if hand.get_count() != 2 || pair_card != hand.iter().nth(1).unwrap() {
         return None;
     };
-    let mut ev = get_split_ev_inner(dealer_calc, deck, all_hands, pair_card, true);
-
-    // Account for dealer blackjack
-    match (
-        deck.get_count_of_card(Card::Ten),
-        deck.get_count_of_card(Card::Ace),
-        deck.get_count(),
-    ) {
-        (t, a, d) if t > 0 && a > 0 => {
-            ev.set(
-                Card::Ten,
-                ev[Card::Ten].unwrap() + a as f64 / (d - 1) as f64,
-            );
-            ev.set(
-                Card::Ace,
-                ev[Card::Ace].unwrap() + t as f64 / (d - 1) as f64,
-            );
+    let mut ev = get_split_ev_inner(dealer_calc, deck, all_hands, pair_card, true, no_blackjack);
+    if !no_blackjack {
+        // Account for dealer blackjack
+        match (
+            deck.get_count_of_card(Card::Ten),
+            deck.get_count_of_card(Card::Ace),
+            deck.get_count(),
+        ) {
+            (t, a, d) if t > 0 && a > 0 => {
+                ev.set(
+                    Card::Ten,
+                    ev[Card::Ten].unwrap() + a as f64 / (d - 1) as f64,
+                );
+                ev.set(
+                    Card::Ace,
+                    ev[Card::Ace].unwrap() + t as f64 / (d - 1) as f64,
+                );
+            }
+            _ => (),
         }
-        _ => (),
+
     }
+
     Some(ev)
 }
 
-fn process_hand(
+fn _process_hand(
     dealer_calc: &mut DealerProbCalculator,
     deck: &Deck,
     all_hands: &IndexMap<Hand, RefCell<HandEV>>,
@@ -430,10 +445,10 @@ fn process_hand(
         } = hand_ev.deref();
 
         let deck = (deck - hand).unwrap();
-        stand = get_stand_ev(dealer_calc, &deck, hand, *hand_value, false);
+        stand = get_stand_ev(dealer_calc, &deck, hand, *hand_value, false, true);
         hit = get_hit_ev(&deck, all_hands, hand, *hand_value, None);
-        double = get_double_ev(&deck, all_hands, hand, *hand_value, None);
-        split = get_split_ev(dealer_calc, &deck, all_hands, hand);
+        double = get_double_ev(&deck, all_hands, hand, *hand_value, None, true);
+        split = get_split_ev(dealer_calc, &deck, all_hands, hand, true);
     }
 
     let mut hand_ev = hand_ev.borrow_mut();
@@ -443,16 +458,9 @@ fn process_hand(
     hand_ev.split = split;
 }
 
-fn compute_ev(starting_deck: &Deck, hand_subset: Option<&Hand>) -> HashMap<Hand, HandEV> {
+pub fn compute_all_hand_ev(starting_deck: &Deck) -> HashMap<Hand, HandEV> {
     let mut dealer_calc = DealerProbCalculator::new();
     let mut hands = generate_all_hands(&starting_deck);
-    if let Some(hs) = hand_subset {
-        if hs.get_count() == 2 && hs.iter().nth(0).unwrap() == hs.iter().nth(1).unwrap() {
-            hands.retain(|h, _| Deck::from(&[hs.iter().nth(0).unwrap()]).is_subset(h));
-        } else {
-            hands.retain(|h, _| hs.is_subset(h));
-        }
-    }
     hands.sort_by(|_, a, _, b| {
         match (a.borrow().hand_value, b.borrow().hand_value) {
             // We must process all the soft values before doing any of the hard
@@ -464,16 +472,33 @@ fn compute_ev(starting_deck: &Deck, hand_subset: Option<&Hand>) -> HashMap<Hand,
         .reverse()
     });
     for hand in hands.values() {
-        process_hand(&mut dealer_calc, &starting_deck, &hands, hand);
+        let stand;
+        let hit;
+        let double;
+        let split;
+        {
+            let hand_ev = hand.borrow();
+            let HandEV {
+                hand, hand_value, ..
+            } = hand_ev.deref();
+
+            let deck = &(starting_deck - hand).unwrap();
+            stand = get_stand_ev(&mut dealer_calc, &deck, hand, *hand_value, false, false);
+            hit = get_hit_ev(&deck, &hands, hand, *hand_value, None);
+            double = get_double_ev(&deck, &hands, hand, *hand_value, None, false);
+            split = get_split_ev(&mut dealer_calc, &deck, &hands, hand, false);
+        }
+
+        let mut hand_ev = hand.borrow_mut();
+        hand_ev.stand = stand;
+        hand_ev.hit = Some(hit);
+        hand_ev.double = double;
+        hand_ev.split = split;
     }
     hands
         .into_iter()
         .map(|(h, hev)| (h, hev.into_inner()))
         .collect::<HashMap<Hand, HandEV>>()
-}
-
-pub fn compute_all_hand_ev(starting_deck: &Deck) -> HashMap<Hand, HandEV> {
-    compute_ev(starting_deck, None)
 }
 
 //0.0015485589837292632 for standard deck
@@ -548,7 +573,48 @@ impl SpecificHandEV {
     }
 
     pub fn create(remaining_deck: &Deck, hand: &Hand, dealer_card: Card) -> SpecificHandEV {
-        let all_evs = compute_ev(&(&(remaining_deck + hand) + dealer_card), Some(hand));
+        let mut dealer_calc = DealerProbCalculator::new();
+        let starting_deck = &(remaining_deck + hand) + dealer_card;
+        let mut hands = generate_all_hands(&starting_deck);
+        if hand.get_count() == 2 && hand.iter().nth(0).unwrap() == hand.iter().nth(1).unwrap() {
+            hands.retain(|h, _| Deck::from(&[hand.iter().nth(0).unwrap()]).is_subset(h));
+        } else {
+            hands.retain(|h, _| hand.is_subset(h));
+        }
+        hands.sort_by(|_, a, _, b| {
+            match (a.borrow().hand_value, b.borrow().hand_value) {
+                // We must process all the soft values before doing any of the hard
+                // values <= 10, because a hard 10 + ace is a soft 21
+                (HandValue::Soft(_), HandValue::Hard(x)) if x <= 10 => cmp::Ordering::Greater,
+                (HandValue::Hard(x), HandValue::Soft(_)) if x <= 10 => cmp::Ordering::Less,
+                (h_a, h_b) => h_a.cmp(&h_b),
+            }
+            .reverse()
+        });
+        for hand in hands.values() {
+            let stand;
+            let hit;
+            let double;
+            let split;
+            {
+                let hand_ev = hand.borrow();
+                let HandEV {
+                    hand, hand_value, ..
+                } = hand_ev.deref();
+
+                let deck = remaining_deck + dealer_card;
+                stand = get_stand_ev(&mut dealer_calc, &deck, hand, *hand_value, false, true);
+                hit = get_hit_ev(&deck, &hands, hand, *hand_value, None);
+                double = get_double_ev(&deck, &hands, hand, *hand_value, None, true);
+                split = get_split_ev(&mut dealer_calc, &deck, &hands, hand, true);
+            }
+
+            let mut hand_ev = hand.borrow_mut();
+            hand_ev.stand = stand;
+            hand_ev.hit = Some(hit);
+            hand_ev.double = double;
+            hand_ev.split = split;
+        }
         let mut ret = SpecificHandEV {
             stand: None,
             hit: None,
@@ -556,11 +622,15 @@ impl SpecificHandEV {
             split: None,
             dealer_card,
             current_hand: hand.clone(),
-            all_evs,
+            all_evs: hands
+                .into_iter()
+                .map(|(h, hev)| (h, hev.into_inner()))
+                .collect::<HashMap<Hand, HandEV>>(),
         };
         ret.update_probs();
         ret
     }
+
     pub fn add_card_to_hand(&mut self, card: Card) {
         self.current_hand += card;
         self.update_probs();
